@@ -128,7 +128,9 @@ def show_main_menu(chat_id, name, greet=True):
     keyboard = types.InlineKeyboardMarkup()
     create_ride_button = types.InlineKeyboardButton(text="🚘 Создать поездку", callback_data="menu_create_ride")
     find_ride_button = types.InlineKeyboardButton(text="🚶 Найти поездку", callback_data="menu_find_ride")
+    restart_button = types.InlineKeyboardButton(text="🔄 Начать сначала", callback_data="restart")
     keyboard.add(create_ride_button, find_ride_button)
+    keyboard.add(restart_button)
 
     if greet:
         text = f"👋 Привет, {name}!\nЧто хотите сделать?"
@@ -136,7 +138,6 @@ def show_main_menu(chat_id, name, greet=True):
         text = "Что хотите сделать?"
 
     bot.send_message(chat_id, text, reply_markup=keyboard)
-
 
 def save_name_handler(message, role):
     chat_id = message.chat.id
@@ -380,6 +381,23 @@ def callback_handler(call):
         conn.close()
         name = result[0] if result is not None else "друг"
         show_main_menu(chat_id, name, greet=False)
+        return
+    elif call.data == "restart":
+        bot.answer_callback_query(call.id)
+        # На всякий случай чистим любые незавершённые данные и ожидание следующего сообщения
+        if chat_id in user_data:
+            del user_data[chat_id]
+        bot.clear_step_handler_by_chat_id(chat_id)
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT name FROM users WHERE tg_id = %s", (chat_id,))
+        result = cur.fetchone()
+        cur.close()
+        conn.close()
+
+        name = result[0] if result is not None else "друг"
+        show_main_menu(chat_id, name, greet=True)
         return
     # --- Выбор роли при регистрации ---
     elif call.data == "role_driver" or call.data == "role_passenger":

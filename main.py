@@ -26,7 +26,29 @@ def is_valid_district(text):
         if district.lower() == text_clean:
             return True
     return False
+# Импортируем модуль для работы с регулярными выражениями (проверка формата текста)
+import re
 
+
+def is_valid_time(text):
+    
+    match = re.match(r'^(\d{1,2}):(\d{2})$', text.strip())
+
+   
+    if not match:
+        return False
+
+    
+    hours = int(match.group(1))
+    minutes = int(match.group(2))
+
+   
+    if hours < 0 or hours > 23:
+        return False
+    if minutes < 0 or minutes > 59:
+        return False
+
+    return True
 
 # ==========================================================
 # ПОДКЛЮЧЕНИЕ К БАЗЕ ДАННЫХ
@@ -171,11 +193,23 @@ def get_district_step(message, chat_id):
 
 def get_time_step(message, chat_id):
     time_str = message.text
+
+    
+    if not is_valid_time(time_str):
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.add(types.InlineKeyboardButton(text="❌ Отмена", callback_data="cancel"))
+        msg = bot.send_message(
+            chat_id,
+            "⚠️ Неверный формат времени. Введите в формате ЧЧ:ММ, например: 08:30",
+            reply_markup=keyboard
+        )
+        bot.register_next_step_handler(msg, get_time_step, chat_id)
+        return
+
     user_data[chat_id]["time"] = time_str
 
     keyboard = types.InlineKeyboardMarkup()
     keyboard.add(types.InlineKeyboardButton(text="❌ Отмена", callback_data="cancel"))
-
     msg = bot.send_message(chat_id, "🪑 Сколько свободных мест?", reply_markup=keyboard)
     bot.register_next_step_handler(msg, get_seats_step, chat_id)
 
@@ -184,9 +218,22 @@ def get_seats_step(message, chat_id):
     try:
         seats = int(message.text)
     except ValueError:
+       
         keyboard = types.InlineKeyboardMarkup()
         keyboard.add(types.InlineKeyboardButton(text="❌ Отмена", callback_data="cancel"))
         msg = bot.send_message(chat_id, "⚠️ Введите число, например: 3", reply_markup=keyboard)
+        bot.register_next_step_handler(msg, get_seats_step, chat_id)
+        return
+
+   
+    if seats < 0 or seats > 4:
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.add(types.InlineKeyboardButton(text="❌ Отмена", callback_data="cancel"))
+        msg = bot.send_message(
+            chat_id,
+            "⚠️ Введите число от 0 до 4",
+            reply_markup=keyboard
+        )
         bot.register_next_step_handler(msg, get_seats_step, chat_id)
         return
 
@@ -214,7 +261,6 @@ def get_seats_step(message, chat_id):
         f"🧭 {direction_text}  📍 {ride['district']} → {campus_text}\n"
         f"⏰ {ride['time']}  🪑 {ride['seats']} мест"
     )
-
 
 # ==========================================================
 # СЦЕНАРИЙ ПАССАЖИРА (поиск и бронирование поездки)
@@ -398,13 +444,18 @@ def callback_handler(call):
 
         driver_tg_id, seats = ride_info
 
-       
         if seats <= 1:
             cur.execute("DELETE FROM rides WHERE id = %s", (ride_id,))
         else:
             cur.execute("UPDATE rides SET seats = seats - 1 WHERE id = %s", (ride_id,))
 
         conn.commit()
+
+        # Достаём имя пассажира из БД, чтобы показать ему главное меню с обращением по имени
+        cur.execute("SELECT name FROM users WHERE tg_id = %s", (chat_id,))
+        passenger_result = cur.fetchone()
+        passenger_name = passenger_result[0] if passenger_result is not None else "друг"
+
         cur.close()
         conn.close()
 
@@ -414,6 +465,9 @@ def callback_handler(call):
             f"🔔 Новая заявка! Пассажир @{passenger_username} забронировал место."
         )
         bot.send_message(chat_id, "✅ Место забронировано! Водитель получил уведомление.")
+
+        # Сразу показываем главное меню, чтобы можно было начать сначала без /start
+        show_main_menu(chat_id, passenger_name)
 
 
 # ==========================================================

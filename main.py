@@ -305,7 +305,8 @@ def find_rides_step(message, chat_id):
           AND rides.campus = %s 
           AND rides.district = %s
           AND rides.seats > 0
-    """, (filters["direction"], filters["campus"], filters["district"]))
+          AND rides.driver_tg_id != %s
+    """, (filters["direction"], filters["campus"], filters["district"], chat_id))
     results = cur.fetchall()
     cur.close()
     conn.close()

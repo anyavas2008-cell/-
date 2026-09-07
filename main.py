@@ -16,7 +16,7 @@ bot = telebot.TeleBot(BOT_TOKEN)
 user_data = {}
 VALID_DISTRICTS = [
     "Ботаника", "Уралмаш", "Химмаш", "Втузгородок",
-    "Академический", "ЖБИ", "Компрессорный", "Центр", "Эльмаш"
+    "Академический", "ЖБИ", "Компрессорный", "Центр", "Эльмаш","Академический", "Верх-Исетский", "Железнодорожный", "Кировский", "Ленинский", "Октябрьский", "Орджоникидзевский", "Чкаловский"
 ]
 
 
@@ -26,6 +26,15 @@ def is_valid_district(text):
         if district.lower() == text_clean:
             return True
     return False
+def build_district_keyboard():
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+    district_buttons = [types.KeyboardButton(text=d) for d in VALID_DISTRICTS]
+    for i in range(0, len(district_buttons), 2):
+        row = district_buttons[i:i + 2]
+        keyboard.add(*row)
+    cancel_button = types.KeyboardButton(text="❌ Отмена")
+    keyboard.add(cancel_button)
+    return keyboard
 # Импортируем модуль для работы с регулярными выражениями (проверка формата текста)
 import re
 
@@ -68,17 +77,10 @@ def get_db_connection():
 # ==========================================================
 
 def cancel_action(chat_id):
-    # Удаляем накопленные временные данные пользователя (если они были)
     if chat_id in user_data:
         del user_data[chat_id]
-
-    # bot.clear_step_handler_by_chat_id "отменяет" ожидание следующего текстового
-    # сообщения, зарегистрированное через register_next_step_handler.
-    # Без этой строки бот всё равно попытается обработать следующее сообщение
-    # пользователя как ответ на вопрос, который мы отменили.
     bot.clear_step_handler_by_chat_id(chat_id)
 
-    # Достаём имя пользователя из БД, чтобы красиво показать главное меню
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("SELECT name FROM users WHERE tg_id = %s", (chat_id,))
@@ -89,8 +91,7 @@ def cancel_action(chat_id):
     name = result[0] if result is not None else "друг"
 
     bot.send_message(chat_id, "❌ Действие отменено.")
-    show_main_menu(chat_id, name)
-
+    show_main_menu(chat_id, name, greet=False)
 
 # ==========================================================
 # СТАРТ И РЕГИСТРАЦИЯ
@@ -123,12 +124,18 @@ def start_handler(message):
         )
 
 
-def show_main_menu(chat_id, name):
+def show_main_menu(chat_id, name, greet=True):
     keyboard = types.InlineKeyboardMarkup()
     create_ride_button = types.InlineKeyboardButton(text="🚘 Создать поездку", callback_data="menu_create_ride")
     find_ride_button = types.InlineKeyboardButton(text="🚶 Найти поездку", callback_data="menu_find_ride")
     keyboard.add(create_ride_button, find_ride_button)
-    bot.send_message(chat_id, f"👋 Привет, {name}!\nЧто хотите сделать?", reply_markup=keyboard)
+
+    if greet:
+        text = f"👋 Привет, {name}!\nЧто хотите сделать?"
+    else:
+        text = "Что хотите сделать?"
+
+    bot.send_message(chat_id, text, reply_markup=keyboard)
 
 
 def save_name_handler(message, role):
@@ -167,29 +174,31 @@ def start_create_ride(chat_id):
 
 
 def get_district_step(message, chat_id):
+    if message.text == "❌ Отмена":
+        bot.send_message(chat_id, "Отменяю...", reply_markup=types.ReplyKeyboardRemove())
+        cancel_action(chat_id)
+        return
+
     district = message.text
 
-    
     if not is_valid_district(district):
-        keyboard = types.InlineKeyboardMarkup()
-        keyboard.add(types.InlineKeyboardButton(text="❌ Отмена", callback_data="cancel"))
-        districts_list = ", ".join(VALID_DISTRICTS)
+        keyboard = build_district_keyboard()
         msg = bot.send_message(
             chat_id,
-            f"⚠️ Такого района нет в списке. Выберите из: {districts_list}",
+            "⚠️ Такого района нет в списке. Выберите кнопкой:",
             reply_markup=keyboard
         )
-
         bot.register_next_step_handler(msg, get_district_step, chat_id)
-        return  
+        return
 
     user_data[chat_id]["district"] = district
+
+    bot.send_message(chat_id, "Район выбран ✅", reply_markup=types.ReplyKeyboardRemove())
 
     keyboard = types.InlineKeyboardMarkup()
     keyboard.add(types.InlineKeyboardButton(text="❌ Отмена", callback_data="cancel"))
     msg = bot.send_message(chat_id, "⏰ Во сколько выезжаете? (например: 08:30)", reply_markup=keyboard)
     bot.register_next_step_handler(msg, get_time_step, chat_id)
-
 
 def get_time_step(message, chat_id):
     time_str = message.text
@@ -261,6 +270,7 @@ def get_seats_step(message, chat_id):
         f"🧭 {direction_text}  📍 {ride['district']} → {campus_text}\n"
         f"⏰ {ride['time']}  🪑 {ride['seats']} мест"
     )
+    show_main_menu(chat_id, driver_name, greet=False)
 
 # ==========================================================
 # СЦЕНАРИЙ ПАССАЖИРА (поиск и бронирование поездки)
@@ -277,20 +287,24 @@ def start_find_ride(chat_id):
 
 
 def find_rides_step(message, chat_id):
+    if message.text == "❌ Отмена":
+        bot.send_message(chat_id, "Отменяю...", reply_markup=types.ReplyKeyboardRemove())
+        cancel_action(chat_id)
+        return
+
     district = message.text
 
-    # Та же проверка, что и у водителя
     if not is_valid_district(district):
-        keyboard = types.InlineKeyboardMarkup()
-        keyboard.add(types.InlineKeyboardButton(text="❌ Отмена", callback_data="cancel"))
-        districts_list = ", ".join(VALID_DISTRICTS)
+        keyboard = build_district_keyboard()
         msg = bot.send_message(
             chat_id,
-            f"⚠️ Такого района нет в списке. Выберите из: {districts_list}",
+            "⚠️ Такого района нет в списке. Выберите кнопкой:",
             reply_markup=keyboard
         )
         bot.register_next_step_handler(msg, find_rides_step, chat_id)
         return
+
+    bot.send_message(chat_id, "Район выбран ✅", reply_markup=types.ReplyKeyboardRemove())
 
     user_data[chat_id]["district"] = district
     filters = user_data[chat_id]
@@ -313,8 +327,17 @@ def find_rides_step(message, chat_id):
 
     del user_data[chat_id]
 
+    # Кнопка "Главное меню" — пригодится в обоих случаях: и если ничего не нашлось,
+    # и после списка найденных поездок
+    menu_keyboard = types.InlineKeyboardMarkup()
+    menu_keyboard.add(types.InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_to_menu"))
+
     if len(results) == 0:
-        bot.send_message(chat_id, "😔 Поездок по вашим параметрам не найдено. Попробуйте позже!")
+        bot.send_message(
+            chat_id,
+            "😔 Поездок по вашим параметрам не найдено. Попробуйте позже!",
+            reply_markup=menu_keyboard
+        )
         return
 
     bot.send_message(chat_id, f"🚗 Найдено поездок: {len(results)}")
@@ -330,6 +353,9 @@ def find_rides_step(message, chat_id):
             reply_markup=keyboard
         )
 
+    # После всех найденных поездок отдельным сообщением показываем кнопку возврата в меню
+    bot.send_message(chat_id, "Если ничего не подошло:", reply_markup=menu_keyboard)
+
 
 # ==========================================================
 # ЕДИНЫЙ ОБРАБОТЧИК ВСЕХ CALLBACK-КНОПОК
@@ -344,7 +370,17 @@ def callback_handler(call):
         bot.answer_callback_query(call.id)
         cancel_action(chat_id)
         return  # выходим сразу, дальше по функции идти не нужно
-
+    elif call.data == "back_to_menu":
+        bot.answer_callback_query(call.id)
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT name FROM users WHERE tg_id = %s", (chat_id,))
+        result = cur.fetchone()
+        cur.close()
+        conn.close()
+        name = result[0] if result is not None else "друг"
+        show_main_menu(chat_id, name, greet=False)
+        return
     # --- Выбор роли при регистрации ---
     elif call.data == "role_driver" or call.data == "role_passenger":
         if call.data == "role_driver":
@@ -391,9 +427,8 @@ def callback_handler(call):
             campus = "mira"
         user_data[chat_id]["campus"] = campus
 
-        keyboard = types.InlineKeyboardMarkup()
-        keyboard.add(types.InlineKeyboardButton(text="❌ Отмена", callback_data="cancel"))
-        msg = bot.send_message(chat_id, "📍 Откуда едете? (например: Ботаника, Уралмаш)", reply_markup=keyboard)
+        keyboard = build_district_keyboard()
+        msg = bot.send_message(chat_id, "📍 Откуда едете? Выберите район:", reply_markup=keyboard)
         bot.register_next_step_handler(msg, get_district_step, chat_id)
 
     # --- Сценарий пассажира: направление ---
@@ -422,9 +457,8 @@ def callback_handler(call):
             campus = "mira"
         user_data[chat_id]["campus"] = campus
 
-        keyboard = types.InlineKeyboardMarkup()
-        keyboard.add(types.InlineKeyboardButton(text="❌ Отмена", callback_data="cancel"))
-        msg = bot.send_message(chat_id, "📍 Из какого вы района?", reply_markup=keyboard)
+        keyboard = build_district_keyboard()
+        msg = bot.send_message(chat_id, "📍 Из какого вы района? Выберите район:", reply_markup=keyboard)
         bot.register_next_step_handler(msg, find_rides_step, chat_id)
 
     # --- Бронирование поездки ---
@@ -468,7 +502,7 @@ def callback_handler(call):
         bot.send_message(chat_id, "✅ Место забронировано! Водитель получил уведомление.")
 
         # Сразу показываем главное меню, чтобы можно было начать сначала без /start
-        show_main_menu(chat_id, passenger_name)
+        show_main_menu(chat_id, passenger_name, greet=False)
 
 
 # ==========================================================

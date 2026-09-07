@@ -6,9 +6,9 @@ import telebot
 from telebot import types
 # Импортируем библиотеку для подключения к PostgreSQL
 import psycopg2
+import os
 
-# Вставь сюда токен своего бота, полученный от @BotFather
-BOT_TOKEN = "8999666334:AAHqq8YdxMn1095k6QAHWuGFKWR55HTU0lk"
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 # Создаём экземпляр бота
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -23,10 +23,10 @@ user_data = {}
 
 def get_db_connection():
     conn = psycopg2.connect(
-        host="localhost",
-        database="urfu_poputka",
-        user="postgres",
-        password="ТВОЙ_ПАРОЛЬ"
+        host="db",
+        database=os.getenv("POSTGRES_DB", "urfu_poputka"),
+        user=os.getenv("POSTGRES_USER", "postgres"),
+        password=os.getenv("POSTGRES_PASSWORD")
     )
     return conn
 

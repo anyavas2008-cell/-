@@ -1,6 +1,5 @@
 
 # Импортируем библиотеку для работы с Telegram Bot API
-
 import telebot
 # Импортируем модуль для создания inline-кнопок
 from telebot import types
@@ -29,8 +28,7 @@ def get_db_connection():
         password=os.getenv("POSTGRES_PASSWORD")
     )
     return conn
-
-
+    
 # ==========================================================
 # ОТМЕНА ДЕЙСТВИЯ — общая функция для любого шага
 # ==========================================================
@@ -221,7 +219,7 @@ def find_rides_step(message, chat_id):
         JOIN users ON rides.driver_tg_id = users.tg_id
         WHERE rides.direction = %s 
           AND rides.campus = %s 
-          AND rides.district = %s
+          AND LOWER(rides.district) = LOWER(%s)
           AND rides.seats > 0
     """, (filters["direction"], filters["campus"], filters["district"]))
     results = cur.fetchall()
@@ -351,17 +349,24 @@ def callback_handler(call):
 
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("SELECT driver_tg_id, seats FROM rides WHERE id = %s", (ride_id,))
-        ride_info = cur.fetchone()
 
-        if ride_info is None:
-            bot.send_message(chat_id, "⚠️ Эта поездка уже недоступна.")
+        cur.execute("""
+                UPDATE rides 
+                SET seats = seats - 1 
+                WHERE id = %s AND seats > 0 
+                RETURNING driver_tg_id;
+            """, (ride_id,))
+
+        result = cur.fetchone()
+
+        if not result:
+            conn.rollback()
             cur.close()
             conn.close()
+            bot.send_message(chat_id, "⚠️ Ой, это место только что забрал кто-то другой!")
             return
 
-        driver_tg_id, seats = ride_info
-        cur.execute("UPDATE rides SET seats = seats - 1 WHERE id = %s", (ride_id,))
+        driver_tg_id = result[0]
         conn.commit()
         cur.close()
         conn.close()

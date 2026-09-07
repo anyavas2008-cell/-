@@ -14,6 +14,18 @@ bot = telebot.TeleBot(BOT_TOKEN)
 
 # Глобальный словарь для хранения промежуточных данных пользователя
 user_data = {}
+VALID_DISTRICTS = [
+    "Ботаника", "Уралмаш", "Химмаш", "Втузгородок",
+    "Академический", "ЖБИ", "Компрессорный", "Центр", "Эльмаш"
+]
+
+
+def is_valid_district(text):
+    text_clean = text.strip().lower()
+    for district in VALID_DISTRICTS:
+        if district.lower() == text_clean:
+            return True
+    return False
 
 
 # ==========================================================
@@ -134,13 +146,25 @@ def start_create_ride(chat_id):
 
 def get_district_step(message, chat_id):
     district = message.text
+
+    
+    if not is_valid_district(district):
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.add(types.InlineKeyboardButton(text="❌ Отмена", callback_data="cancel"))
+        districts_list = ", ".join(VALID_DISTRICTS)
+        msg = bot.send_message(
+            chat_id,
+            f"⚠️ Такого района нет в списке. Выберите из: {districts_list}",
+            reply_markup=keyboard
+        )
+
+        bot.register_next_step_handler(msg, get_district_step, chat_id)
+        return  
+
     user_data[chat_id]["district"] = district
 
-    # Для текстовых вопросов прикрепляем клавиатуру только с кнопкой "Отмена" —
-    # пользователь либо печатает ответ, либо жмёт отмену
     keyboard = types.InlineKeyboardMarkup()
     keyboard.add(types.InlineKeyboardButton(text="❌ Отмена", callback_data="cancel"))
-
     msg = bot.send_message(chat_id, "⏰ Во сколько выезжаете? (например: 08:30)", reply_markup=keyboard)
     bot.register_next_step_handler(msg, get_time_step, chat_id)
 
@@ -208,6 +232,20 @@ def start_find_ride(chat_id):
 
 def find_rides_step(message, chat_id):
     district = message.text
+
+    # Та же проверка, что и у водителя
+    if not is_valid_district(district):
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.add(types.InlineKeyboardButton(text="❌ Отмена", callback_data="cancel"))
+        districts_list = ", ".join(VALID_DISTRICTS)
+        msg = bot.send_message(
+            chat_id,
+            f"⚠️ Такого района нет в списке. Выберите из: {districts_list}",
+            reply_markup=keyboard
+        )
+        bot.register_next_step_handler(msg, find_rides_step, chat_id)
+        return
+
     user_data[chat_id]["district"] = district
     filters = user_data[chat_id]
 
@@ -219,7 +257,7 @@ def find_rides_step(message, chat_id):
         JOIN users ON rides.driver_tg_id = users.tg_id
         WHERE rides.direction = %s 
           AND rides.campus = %s 
-          AND LOWER(rides.district) = LOWER(%s)
+          AND rides.district = %s
           AND rides.seats > 0
     """, (filters["direction"], filters["campus"], filters["district"]))
     results = cur.fetchall()
@@ -349,24 +387,23 @@ def callback_handler(call):
 
         conn = get_db_connection()
         cur = conn.cursor()
+        cur.execute("SELECT driver_tg_id, seats FROM rides WHERE id = %s", (ride_id,))
+        ride_info = cur.fetchone()
 
-        cur.execute("""
-                UPDATE rides 
-                SET seats = seats - 1 
-                WHERE id = %s AND seats > 0 
-                RETURNING driver_tg_id;
-            """, (ride_id,))
-
-        result = cur.fetchone()
-
-        if not result:
-            conn.rollback()
+        if ride_info is None:
+            bot.send_message(chat_id, "⚠️ Эта поездка уже недоступна.")
             cur.close()
             conn.close()
-            bot.send_message(chat_id, "⚠️ Ой, это место только что забрал кто-то другой!")
             return
 
-        driver_tg_id = result[0]
+        driver_tg_id, seats = ride_info
+
+       
+        if seats <= 1:
+            cur.execute("DELETE FROM rides WHERE id = %s", (ride_id,))
+        else:
+            cur.execute("UPDATE rides SET seats = seats - 1 WHERE id = %s", (ride_id,))
+
         conn.commit()
         cur.close()
         conn.close()
